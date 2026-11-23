@@ -7,12 +7,17 @@
 
 .rootBodyPage {
   background: var(--payment-page-background-color);
+
+  :global(.App) {
+    min-width: 0;
+  }
 }
 
 .root {
   border-radius: 10px;
   box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.1);
   width: 600px;
+  max-width: calc(100vw - 32px);
   color: #222;
   background-color: #fff;
 }
