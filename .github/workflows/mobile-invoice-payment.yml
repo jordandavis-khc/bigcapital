@@ -1,0 +1,93 @@
+name: Mobile invoice payment
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'packages/webapp/**'
+      - 'shared/**'
+      - 'e2e/payment-portal-responsive.spec.ts'
+      - 'playwright.payment-portal.config.ts'
+      - '.github/workflows/mobile-invoice-payment.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches: [fix/mobile-invoice-payment]
+    paths:
+      - 'packages/webapp/**'
+      - 'shared/**'
+      - 'e2e/payment-portal-responsive.spec.ts'
+      - 'playwright.payment-portal.config.ts'
+      - '.github/workflows/mobile-invoice-payment.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-test-publish-webapp:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18.16.1'
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build webapp image
+        run: docker build --file packages/webapp/Dockerfile --tag mobile-invoice-payment:test .
+
+      - name: Run built image
+        run: docker run --detach --rm --name mobile-invoice-payment-test --publish 4173:80 mobile-invoice-payment:test
+
+      - name: Wait for built webapp
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          docker logs mobile-invoice-payment-test
+          exit 1
+
+      - name: Test built payment page at 360, 390, 768, and 1280px
+        run: pnpm exec playwright test --config playwright.payment-portal.config.ts
+
+      - name: Stop test container
+        if: always()
+        run: docker stop mobile-invoice-payment-test || true
+
+      - name: Publish immutable webapp image
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/bigcapital-webapp
+          IMAGE_TAG: mobile-invoice-payment-${{ github.sha }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag mobile-invoice-payment:test "$IMAGE:$IMAGE_TAG"
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:$IMAGE_TAG" | tee image-digest.txt
+
+      - name: Upload image digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-invoice-payment-image-digest
+          path: image-digest.txt
+          if-no-files-found: error
